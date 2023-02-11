@@ -29,7 +29,7 @@ class LetterCountingExample(object):
 # a single layer of the Transformer; this Module will take the raw words as input and do all of the steps necessary
 # to return distributions over the labels (0, 1, or 2).
 class Transformer(nn.Module):
-    def __init__(self, vocab_size, num_positions, d_model, d_internal, num_classes, num_layers):
+    def __init__(self, vocab_size, num_positions, d_model, d_internal, num_classes, num_layers, position_style):
         """
         :param vocab_size: vocabulary size of the embedding layer
         :param num_positions: max sequence length that will be fed to the model; should be 20
@@ -64,6 +64,7 @@ class Transformer(nn.Module):
         self.emb = nn.Embedding(vocab_size, d_model)
         self.positional_encoding = PositionalEncoding(self.d_model, self.num_positions)
 
+        self.position_style = position_style
 
     def forward(self, indices):
         """
@@ -80,12 +81,14 @@ class Transformer(nn.Module):
 
         E = self.emb(indices) # size T x d_model   [T = len of sequence]
 
-        #TODO put this back in!
-        # POSITIONAL ENCODING -- this will add E to the positional encoding
-#        E2 = self.positional_encoding(E)
+        if self.position_style == 'learned':
+            # POSITIONAL ENCODING -- this will add E to the positional encoding
+            E2 = self.positional_encoding(E)
+        if self.position_style == 'none':
+            E2 = E
 
         # pass through transformer layer N times (once for now)
-        attention, V = self.tl1(E)
+        attention, V = self.tl1(E2)
 
         attn_maps = [attention]
 
@@ -133,8 +136,7 @@ class TransformerLayer(nn.Module):
     def forward(self, input_vecs):
         #raise Exception("Implement me")
 
-        #NOTE is input_vecs a list of vectors or a matrix? (T rows x d_model )
-        #try using a matrix (T x d_model) first
+        #NOTE input_vecs is a matrix? (T rows x d_model )
 
         Q = torch.matmul(input_vecs, self.WQ)
 
@@ -214,8 +216,9 @@ def train_classifier(args, train, dev):
     num_layers = 1 # try 2 later
 
     learning_rate = 1e-3 #1e-5 #1e-4
+    position_style = 'none' #'learned' # ALSO: 'none', ''
 
-    model = Transformer(vocab_size, num_positions, d_model, d_internal, num_classes, num_layers)
+    model = Transformer(vocab_size, num_positions, d_model, d_internal, num_classes, num_layers, position_style)
 
     #model.train()
 
