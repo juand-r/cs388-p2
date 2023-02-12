@@ -216,7 +216,7 @@ def train_classifier(args, train, dev):
     num_layers = 1 # try 2 later
 
     learning_rate = 1e-3 #1e-5 #1e-4
-    position_style = 'none' #'learned' # ALSO: 'none', ''
+    position_style = 'learned'#'none' #'learned' # ALSO: 'none', ''
 
     model = Transformer(vocab_size, num_positions, d_model, d_internal, num_classes, num_layers, position_style)
 
