@@ -52,8 +52,8 @@ class Transformer(nn.Module):
         self.d_ff = 480 #PREV 250
 
         # only one layer for now!
-        if self.num_layers !=1:
-            raise NotImplementedError("TODO: more than one transformer layer")
+        #if self.num_layers !=1:
+        #    raise NotImplementedError("TODO: more than one transformer layer")
 
         self.tl1 = TransformerLayer(self.d_model, self.d_internal, self.d_value, self.d_ff)
         self.log_softmax = nn.LogSoftmax(dim=1)#TODO check this is right dim
@@ -83,14 +83,16 @@ class Transformer(nn.Module):
 
         if self.position_style == 'learned':
             # POSITIONAL ENCODING -- this will add E to the positional encoding
-            E2 = self.positional_encoding(E)
+            V = self.positional_encoding(E)
         if self.position_style == 'none':
-            E2 = E
+            V = E
 
         # pass through transformer layer N times (once for now)
-        attention, V = self.tl1(E2)
-
-        attn_maps = [attention]
+        attn_maps = []
+        for ii in range(self.num_layers):
+            attention, V = self.tl1(V)
+            attn_maps.append(attention)
+#            attn_maps = [attention]
 
         # linear  and  softmax
         log_probs = self.log_softmax(self.W( V  )  )
@@ -192,7 +194,7 @@ class PositionalEncoding(nn.Module):
 
 
 # This is a skeleton for train_classifier: you can implement this however you want
-def train_classifier(args, train, dev):
+def train_classifier(args, train, dev, num_layers = 1):
     """
     train, dev : list of LetterCountingExample
     """
@@ -213,9 +215,9 @@ def train_classifier(args, train, dev):
 
     d_model = 120 #PREV 100  experiment with it here..
     d_internal = 15 #PREV 20  # same as d_k
-    num_layers = 1 # try 2 later
+    num_layers = num_layers#1 # try 2 later
 
-    learning_rate = 1e-3 #1e-5 #1e-4
+    learning_rate = 1e-3 #1e-4#1e-3 
     position_style = 'learned'#'none' #'learned' # ALSO: 'none', ''
 
     model = Transformer(vocab_size, num_positions, d_model, d_internal, num_classes, num_layers, position_style)
@@ -304,8 +306,8 @@ def decode(model: Transformer, dev_examples: List[LetterCountingExample], do_pri
         acc = sum([predictions[i] == ex.output[i] for i in range(0, len(predictions))])
         num_correct += acc
         num_total += len(predictions)
-    print("Accuracy: %i / %i = %f" % (num_correct, num_total, float(num_correct) / num_total))
-
+#    print("Accuracy: %i / %i = %f" % (num_correct, num_total, float(num_correct) / num_total))
+    return float(num_correct) / num_total
 
 def attention_normalization_test(attn_maps):
     """
