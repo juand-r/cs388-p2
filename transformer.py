@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from typing import List
 from utils import *
 
+from tqdm import tqdm
 
 # Wraps an example: stores the raw input string (input), the indexed form of the string (input_indexed),
 # a tensorized version of that (input_tensor), the raw outputs (output; a numpy array) and a tensorized version
@@ -24,12 +25,20 @@ class LetterCountingExample(object):
         self.output = output
         self.output_tensor = torch.LongTensor(self.output)
 
+def getPositionEncoding(seq_len, d, n=10000):
+    P = np.zeros((seq_len, d))
+    for k in range(seq_len):
+        for i in np.arange(int(d/2)):
+            denominator = np.power(n, 2*i/d)
+            P[k, 2*i] = np.sin(k/denominator)
+            P[k, 2*i+1] = np.cos(k/denominator)
+    return P
 
 # Should contain your overall Transformer implementation. You will want to use Transformer layer to implement
 # a single layer of the Transformer; this Module will take the raw words as input and do all of the steps necessary
 # to return distributions over the labels (0, 1, or 2).
 class Transformer(nn.Module):
-    def __init__(self, vocab_size, num_positions, d_model, d_internal, num_classes, num_layers, position_style):
+    def __init__(self, vocab_size, num_positions, d_model, d_internal, num_classes, num_layers, position_style, num_heads):
         """
         :param vocab_size: vocabulary size of the embedding layer
         :param num_positions: max sequence length that will be fed to the model; should be 20
@@ -46,16 +55,18 @@ class Transformer(nn.Module):
         self.d_internal = d_internal # dimension of keys and queries
         self.num_classes = num_classes
         self.num_layers = num_layers
+        self.position_style = position_style
+        self.num_heads = num_heads
 
         # later
         self.d_value = d_internal # just for now ... 20
-        self.d_ff = 480 #PREV 250
+        self.d_ff = 512 ##480 #1024#480 #PREV 250
 
         # only one layer for now!
         #if self.num_layers !=1:
         #    raise NotImplementedError("TODO: more than one transformer layer")
 
-        self.tl1 = TransformerLayer(self.d_model, self.d_internal, self.d_value, self.d_ff)
+        self.tl1 = TransformerLayer(self.d_model, self.d_internal, self.d_value, self.d_ff, self.position_style, self.num_heads)
         self.log_softmax = nn.LogSoftmax(dim=1)#TODO check this is right dim
         self.W = nn.Linear(d_model, num_classes) # last linear layer before softmax
 
@@ -63,8 +74,7 @@ class Transformer(nn.Module):
         #USE A RANDOM VECTOR EMBEDDING FOR EACH CHARACTER OR JUST ONE-HOT?
         self.emb = nn.Embedding(vocab_size, d_model)
         self.positional_encoding = PositionalEncoding(self.d_model, self.num_positions)
-
-        self.position_style = position_style
+        self.sinusoid_encoding = SinusoidEncoding(self.d_model)
 
     def forward(self, indices):
         """
@@ -79,19 +89,24 @@ class Transformer(nn.Module):
         # 20 x 27 ....
 
 
-        E = self.emb(indices) # size T x d_model   [T = len of sequence]
+        V = self.emb(indices) # size T x d_model   [T = len of sequence]
 
         if self.position_style == 'learned':
             # POSITIONAL ENCODING -- this will add E to the positional encoding
-            V = self.positional_encoding(E)
-        if self.position_style == 'none':
-            V = E
+            V = self.positional_encoding(V)
+#        if self.position_style in ['none', 'alibi']:
+#            V = E
+        if self.position_style == 'sinusoid':
+            #P = torch.FloatTensor(getPositionEncoding(seq_len=len(indices), d=self.d_model, n=10000))
+            #V = P+E
+            V = self.sinusoid_encoding(V)
 
         # pass through transformer layer N times (once for now)
         attn_maps = []
         for ii in range(self.num_layers):
             attention, V = self.tl1(V)
-            attn_maps.append(attention)
+            attn_maps.extend(attention)
+            #attn_maps.append(attention)
 #            attn_maps = [attention]
 
         # linear  and  softmax
@@ -109,7 +124,7 @@ class Transformer(nn.Module):
 # Your implementation of the Transformer layer goes here. It should take vectors and return the same number of vectors
 # of the same length, applying self-attention, the feedforward layer, etc.
 class TransformerLayer(nn.Module):
-    def __init__(self, d_model, d_internal, d_value, d_ff):
+    def __init__(self, d_model, d_internal, d_value, d_ff, position_style, num_heads):
         """
         :param d_model: The dimension of the inputs and outputs of the layer (note that the inputs and outputs
         have to be the same size for the residual connection to work)
@@ -120,15 +135,31 @@ class TransformerLayer(nn.Module):
         self.d_internal = d_internal
         self.d_value = d_value
         self.d_ff = d_ff
+        self.position_style = position_style
+        self.num_heads = num_heads
 
-        self.softmax = nn.Softmax(dim=1) # want columns to sum to 1
+        #self.softmax = nn.Softmax(dim=1) # want columns to sum to 1
+        self.softmax = nn.Softmax(dim=-1) # want columns to sum to 1
 
-        self.WQ = nn.init.xavier_uniform_(torch.empty(d_model, d_internal))
-        self.WK = nn.init.xavier_uniform_(torch.empty(d_model, d_internal))
+#        self.WQs = []
+#        self.WKs = []
+#        self.WVs = []
+#        for ii in range(num_heads):
+#        self.WQ = nn.init.xavier_uniform_(torch.empty(d_model, d_internal))
+#        self.WK = nn.init.xavier_uniform_(torch.empty(d_model, d_internal))
+#        self.WV = nn.init.xavier_uniform_(torch.empty(d_model, d_value))
 
-        self.WV = nn.init.xavier_uniform_(torch.empty(d_model, d_value))
+#            self.WQs.append(nn.init.xavier_uniform_(torch.empty(d_model, d_internal)))
+#            self.WKs.append(nn.init.xavier_uniform_(torch.empty(d_model, d_internal)))
+#            self.WVs.append(nn.init.xavier_uniform_(torch.empty(d_model, d_value)))
 
-        self.WO = nn.Linear(d_value, d_model)
+        #NOTE need to put num_head dim first!
+        self.WQs =  nn.init.xavier_uniform_(torch.empty(num_heads, d_model, d_internal))
+        self.WKs =  nn.init.xavier_uniform_(torch.empty(num_heads, d_model, d_internal))
+        self.WVs =  nn.init.xavier_uniform_(torch.empty(num_heads, d_model, d_value))
+
+#        self.WO = nn.Linear(d_value, d_model)
+        self.WO = nn.Linear(d_value*num_heads, d_model)
 
         self.FF1 = nn.Linear(d_model, d_ff)
         self.FF2 = nn.Linear(d_ff, d_model)
@@ -137,20 +168,58 @@ class TransformerLayer(nn.Module):
 
     def forward(self, input_vecs):
         #raise Exception("Implement me")
+        seqlen = input_vecs.shape[0]
+        #NOTE input_vecs is a matrix (T rows x d_model )
 
-        #NOTE input_vecs is a matrix? (T rows x d_model )
+        zouts = []
+        attentionmaps = []
 
-        Q = torch.matmul(input_vecs, self.WQ)
+        Qs = torch.matmul(input_vecs, self.WQs) # will multiply for each head.
+        Ks = torch.matmul(input_vecs, self.WKs)
+        Vs = torch.matmul(input_vecs, self.WVs)
 
-        K = torch.matmul(input_vecs, self.WK)
+        mask = torch.triu(torch.ones(seqlen, seqlen) * float('-inf'),  diagonal=1)
 
-        V = torch.matmul(input_vecs, self.WV)
+        # note: first dim is for heads, so need to transpose (1,2) instead of (0,1)
+        scores = torch.matmul(Qs, torch.transpose(Ks,1,2))/np.sqrt(self.d_internal)
 
-        # self-attention
-        SA = self.softmax(torch.matmul(Q, torch.transpose(K,0,1))/np.sqrt(self.d_internal) )
+
+        if self.position_style == 'alibi':
+            slopes = [ (2**(-32.0/self.num_heads))**i  for i in range(1,self.num_heads+1)]
+            linear_biases = torch.FloatTensor([[[ -max(0,i-j)*slope   for j in range(seqlen)] for i in range(seqlen)] for slope in slopes])
+            SA = self.softmax(mask + linear_biases + scores/np.sqrt(self.d_internal) )
+        else:
+            SA = self.softmax(mask + scores/np.sqrt(self.d_internal) ) # this is numheads x len x len
+
+#        for ii in range(self.num_heads):
+#            Q = torch.matmul(input_vecs, self.WQs[ii])
+#            K = torch.matmul(input_vecs, self.WKs[ii])
+#            V = torch.matmul(input_vecs, self.WVs[ii])
+
+#            mask = torch.triu(torch.ones(seqlen, seqlen) * float('-inf'),  diagonal=1)
+
+            # self-attention
+#            if self.position_style == 'alibi':
+#                linear_bias = slopes[ii]*torch.FloatTensor([[-max(0,i-j)   for j in range(seqlen)] for i in range(seqlen)])
+#                SA = self.softmax(mask + linear_bias + (torch.matmul(Q, torch.transpose(K,0,1)) )*1/np.sqrt(self.d_internal) )
+#            else:
+#                SA = self.softmax(mask + torch.matmul(Q, torch.transpose(K,0,1)) /np.sqrt(self.d_internal) )
+
+#            attentionmaps.append(SA)
+#            zouts.append(torch.matmul(SA, V))
+        zouts = torch.matmul(SA, Vs)
+
+        #NOTE there's got to be a better way to do this...
+        zconcat = torch.hstack([zouts[i,:,:] for i in range(self.num_heads)])
+
+
+#        zconcat = torch.hstack(zouts)
+        attouts = input_vecs + self.WO(zconcat)
+
+
 
         # do weighted average, map back to dim d_model using welf.WO, and residual connection
-        attouts = input_vecs + self.WO( torch.matmul(SA, V) )
+        #attouts = input_vecs + self.WO( torch.matmul(SA, V) )
 
         #feed forward.. use same weight matrix for each position
         output_vecs = attouts  +  self.FF2( self.g( self.FF1( attouts  ) ))
@@ -159,7 +228,20 @@ class TransformerLayer(nn.Module):
 
         #output_vecs = attouts
 
+        SA = [SA[i] for i in range(self.num_heads)]
+
         return SA, output_vecs
+
+
+class SinusoidEncoding(nn.Module):
+    def __init__(self, d_model: int, batched=False):
+        super().__init__()
+        self.d_model = d_model
+
+    def forward(self, x):
+        input_size = x.shape[-2]
+        P = torch.Tensor(getPositionEncoding(seq_len=len(x), d=self.d_model, n=10000))
+        return x + P
 
 # Implementation of positional encoding that you can use in your network
 class PositionalEncoding(nn.Module):
@@ -194,7 +276,11 @@ class PositionalEncoding(nn.Module):
 
 
 # This is a skeleton for train_classifier: you can implement this however you want
-def train_classifier(args, train, dev, num_layers = 1):
+def train_classifier(args, train, dev,
+                     num_layers = 1,
+                     position_style = 'none',
+                     num_heads=8,
+                     num_epochs=3):
     """
     train, dev : list of LetterCountingExample
     """
@@ -203,7 +289,7 @@ def train_classifier(args, train, dev, num_layers = 1):
     # The following code DOES NOT WORK but can be a starting point for your implementation
     # Some suggested snippets to use:
 
-    #train = train[:5500]
+    ##train = train[:2000]
 
     num_positions = len(train[0].input_tensor)
     #assert num_positions == 20
@@ -212,24 +298,26 @@ def train_classifier(args, train, dev, num_layers = 1):
     vocab_size = 27
     num_classes = 3 # predicting {0,1,2}
 
-
-    d_model = 120 #PREV 100  experiment with it here..
-    d_internal = 15 #PREV 20  # same as d_k
+    #num_heads = 1
+    d_model = 128 ##120 #PREV 100  experiment with it here..
+    d_internal = 16 #PREV 20  # same as d_k
     num_layers = num_layers#1 # try 2 later
 
-    learning_rate = 1e-3 #1e-4#1e-3 
-    position_style = 'learned'#'none' #'learned' # ALSO: 'none', ''
+    learning_rate = 1e-3#5e-4#1e-4#1e-3 #1e-4#1e-3
+    #position_style = position_style#'learned'#'none' #'learned' # ALSO: 'none', ''
 
-    model = Transformer(vocab_size, num_positions, d_model, d_internal, num_classes, num_layers, position_style)
+    model = Transformer(vocab_size, num_positions, d_model, d_internal, num_classes, num_layers, position_style, num_heads)
 
     #model.train()
 
     model.zero_grad()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-    num_epochs = 10
+    #num_epochs = 30
 
+    accs_over_epochs = []
     for t in range(0, num_epochs):
+        model.train() #NOTE: need this because I used model.eval() below
         loss_this_epoch = 0.0
         random.seed(t)
         # You can use batching if you'd like
@@ -254,8 +342,17 @@ def train_classifier(args, train, dev, num_layers = 1):
             loss_this_epoch += loss.item()
         print("Training loss on EPOCH: "+str(t)+": ", loss_this_epoch)
 
+        #SEE HOW FAST IT CONVERGES
+        model.eval()
+        with torch.no_grad():
+            train_acc = decode(model, train)#dev)
+            acc = decode(model, dev)
+        accs_over_epochs.append(acc)
+        print("TRAIN ACC for EPOCH: "+ str(t)+": ", train_acc)
+        print("  DEV ACC for EPOCH: "+ str(t)+": ", acc)
+
     model.eval()
-    return model
+    return model, accs_over_epochs
 
 
 ####################################
