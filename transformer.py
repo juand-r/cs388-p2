@@ -181,13 +181,13 @@ class TransformerLayer(nn.Module):
         mask = torch.triu(torch.ones(seqlen, seqlen) * float('-inf'),  diagonal=1)
 
         # note: first dim is for heads, so need to transpose (1,2) instead of (0,1)
-        scores = torch.matmul(Qs, torch.transpose(Ks,1,2))/np.sqrt(self.d_internal)
+        scores = torch.matmul(Qs, torch.transpose(Ks,1,2)) # /np.sqrt(self.d_internal)
 
 
         if self.position_style == 'alibi':
-            slopes = [ (2**(-32.0/self.num_heads))**i  for i in range(1,self.num_heads+1)]
+            slopes = [ (2**(-8.0/self.num_heads))**i  for i in range(1,self.num_heads+1)]
             linear_biases = torch.FloatTensor([[[ -max(0,i-j)*slope   for j in range(seqlen)] for i in range(seqlen)] for slope in slopes])
-            SA = self.softmax(mask + linear_biases + scores/np.sqrt(self.d_internal) )
+            SA = self.softmax(mask + linear_biases + (scores/np.sqrt(self.d_internal) )  )
         else:
             SA = self.softmax(mask + scores/np.sqrt(self.d_internal) ) # this is numheads x len x len
 
@@ -303,7 +303,7 @@ def train_classifier(args, train, dev,
     d_internal = 16 #PREV 20  # same as d_k
     num_layers = num_layers#1 # try 2 later
 
-    learning_rate = 1e-3#5e-4#1e-4#1e-3 #1e-4#1e-3
+    learning_rate = 1e-4#5e-4#1e-4#1e-3 #1e-4#1e-3
     #position_style = position_style#'learned'#'none' #'learned' # ALSO: 'none', ''
 
     model = Transformer(vocab_size, num_positions, d_model, d_internal, num_classes, num_layers, position_style, num_heads)
